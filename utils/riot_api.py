@@ -1,6 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
+from typing import Optional, Dict, Any, List
 
 load_dotenv()
 API_KEY = os.getenv('RIOT_API_KEY')
@@ -9,6 +10,20 @@ if not API_KEY:
 
 REGION = "asia"  # アカウントAPIはasiaリージョンを使用
 GAME_REGION = "jp1"  # ゲームデータAPIはjp1リージョンを使用
+
+RIOT_API_BASE_URL = 'https://asia.api.riotgames.com'
+RIOT_API_JP_URL = 'https://jp1.api.riotgames.com'
+
+def get_latest_version() -> str:
+    """最新のDDragonバージョンを取得"""
+    try:
+        response = requests.get('https://ddragon.leagueoflegends.com/api/versions.json')
+        versions = response.json()
+        return versions[0]
+    except:
+        return '14.1.1'  # フォールバックバージョン
+
+DDRAGON_VERSION = get_latest_version()
 
 def get_summoner_by_riot_id(game_name, tag_line):
     if '#' in tag_line:
@@ -44,5 +59,6 @@ def get_league_info(summoner_id):
     except requests.exceptions.RequestException as e:
         return None
 
-def get_profile_icon_url(icon_id):
-    return f"https://ddragon.leagueoflegends.com/cdn/13.24.1/img/profileicon/{icon_id}.png" 
+def get_profile_icon_url(icon_id: int) -> str:
+    """プロフィールアイコンのURLを取得"""
+    return f"https://ddragon.leagueoflegends.com/cdn/{DDRAGON_VERSION}/img/profileicon/{icon_id}.png" 
