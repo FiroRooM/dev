@@ -168,9 +168,16 @@ class TeamCog(commands.Cog):
             app_commands.Choice(name="制限なし", value="0")
         ]
     )
-    async def create_team(self, interaction: discord.Interaction, purpose: app_commands.Choice[str], main_lane: app_commands.Choice[str], recruitment_count: app_commands.Choice[str], summoner_name: str, tag: str):
+    async def create_team(self, interaction: discord.Interaction, purpose: app_commands.Choice[str], main_lane: app_commands.Choice[str], recruitment_count: app_commands.Choice[str]):
         user_id = interaction.user.id
 
+        # LoLCogからサモナー情報を取得
+        lol_cog = self.bot.get_cog("LoLCog")
+        if not lol_cog or user_id not in lol_cog.summoner_map:
+            await interaction.response.send_message("先に /lol コマンドでサモナー名を登録してください。", ephemeral=True)
+            return
+        
+        summoner_name, tag = lol_cog.summoner_map[user_id]
         # Riot APIから最新サモナー情報取得
         account_info = get_summoner_by_riot_id(summoner_name, tag)
         if not account_info:
@@ -191,14 +198,14 @@ class TeamCog(commands.Cog):
                 rank = solo['rank']
                 rank_display = f"{tier.title()} {rank}"
                 if tier.upper() == "BRONZE":
-                    rank_emoji = get_rank_emoji(tier)
+                    rank_emoji = "<:Bronze:1338975778884288552>"
             else:
                 q = league_info[0]
                 tier = q['tier']
                 rank = q['rank']
                 rank_display = f"{tier.title()} {rank}"
                 if tier.upper() == "BRONZE":
-                    rank_emoji = get_rank_emoji(tier)
+                    rank_emoji = "<:Bronze:1338975778884288552>"
         display_name = f"{account_info['gameName']}#{account_info['tagLine']}"
 
         guild = interaction.guild
