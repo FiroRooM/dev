@@ -1,12 +1,15 @@
 import discord
 from discord.ext import commands
 from utils.riot_api import get_summoner_by_riot_id, get_summoner_by_puuid, get_league_info, get_profile_icon_url
+from typing import Dict, Tuple
+import json
+import os
 
 class LoLCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.summoner_map = {}  # user_id: (name, tag)
-        self.reverse_summoner_map = {}  # (name, tag): user_id
+        self.summoner_map: Dict[int, Tuple[str, str]] = {}  # user_id: (name, tag)
+        self.reverse_summoner_map: Dict[Tuple[str, str], int] = {}  # (name, tag): user_id
         self.RANK_EMOJIS = {
             "IRON": "<:Iron:1338975778884288552>",
             "BRONZE": "<:Bronze:1338975778884288552>",
@@ -18,6 +21,50 @@ class LoLCog(commands.Cog):
             "GRANDMASTER": "<:Grandmaster:1338975778884288552>",
             "CHALLENGER": "<:Challenger:1338975778884288552>"
         }
+        self.load_data()
+
+    def load_data(self):
+        try:
+            if os.path.exists('data/summoner_data.json'):
+                with open('data/summoner_data.json', 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.summoner_map = {int(k): tuple(v) for k, v in data['summoner_map'].items()}
+                    self.reverse_summoner_map = {tuple(k.split('|')): int(v) for k, v in data['reverse_map'].items()}
+        except Exception as e:
+            print(f"データ読み込みエラー: {e}")
+
+    def save_data(self):
+        try:
+            os.makedirs('data', exist_ok=True)
+            with open('data/summoner_data.json', 'w', encoding='utf-8') as f:
+                data = {
+                    'summoner_map': {str(k): list(v) for k, v in self.summoner_map.items()},
+                    'reverse_map': {f"{k[0]}|{k[1]}": str(v) for k, v in self.reverse_summoner_map.items()}
+                }
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"データ保存エラー: {e}")
+
+    @commands.hybrid_command(name="unregister", description="登録したサモナー情報を削除します")
+    async def unregister(self, ctx):
+        user_id = ctx.author.id
+        if user_id not in self.summoner_map:
+            await ctx.send("登録されているサモナー情報がありません。", ephemeral=True)
+            return
+
+        name, tag = self.summoner_map[user_id]
+        del self.reverse_summoner_map[(name, tag)]
+        del self.summoner_map[user_id]
+        self.save_data()
+        await ctx.send("サモナー情報を削除しました。", ephemeral=True)
+
+    @commands.hybrid_command(name="clean", description="全てのサモナー情報をリセットします")
+    @commands.has_permissions(administrator=True)
+    async def clean(self, ctx):
+        self.summoner_map.clear()
+        self.reverse_summoner_map.clear()
+        self.save_data()
+        await ctx.send("全てのサモナー情報をリセットしました。", ephemeral=True)
 
     @commands.hybrid_command(name="lol", description="League of Legendsのサモナー名とタグを登録します")
     async def lol(self, ctx, summoner_name: str, tag: str):
@@ -62,6 +109,7 @@ class LoLCog(commands.Cog):
                 # 新しいアカウントを登録
                 self.summoner_map[ctx.author.id] = (game_name, tag_line)
                 self.reverse_summoner_map[summoner_key] = ctx.author.id
+                self.save_data()
                 await self.display_summoner_info(interaction, game_name, tag_line, edit_message=True)
 
             async def cancel_callback(interaction: discord.Interaction):
@@ -88,6 +136,7 @@ class LoLCog(commands.Cog):
         # 新規登録
         self.summoner_map[ctx.author.id] = (game_name, tag_line)
         self.reverse_summoner_map[summoner_key] = ctx.author.id
+        self.save_data()
         await self.display_summoner_info(ctx, game_name, tag_line)
 
     async def display_summoner_info(self, ctx, game_name: str, tag_line: str, edit_message: bool = False):
