@@ -1,17 +1,29 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from utils.helper import get_rank_display, get_rank_image_url
+from utils.helper import get_rank_display, get_rank_image_url, get_rank_emoji
+from utils.riot_api import get_summoner_by_riot_id, get_summoner_by_puuid, get_league_info
 import asyncio
+from typing import Dict, Any
+from dataclasses import dataclass, asdict
+from datetime import datetime
+
+@dataclass
+class Team:
+    creator_id: str
+    purpose: str
+    voice_channel_id: int
+    members: Dict[str, str]
+    created_at: str
+    recruitment_count: str
+    message_id: int = None
 
 class TeamRecruitmentView(discord.ui.View):
-    def __init__(self, team_id, voice_channel, cog, db, ROLE_NAMES):
+    def __init__(self, team_id: str, voice_channel: discord.VoiceChannel, cog):
         super().__init__(timeout=None)
         self.team_id = team_id
         self.voice_channel = voice_channel
-        self.cog = cog  # TeamCogインスタンス
-        self.db = db
-        self.ROLE_NAMES = ROLE_NAMES
+        self.cog = cog
         self.add_item(discord.ui.Button(
             label="チームに参加",
             style=discord.ButtonStyle.green,
@@ -35,45 +47,38 @@ class TeamRecruitmentView(discord.ui.View):
 
     async def join_button(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
-        if user_id not in self.db.users:
-            await interaction.response.send_message("最初に /register コマンドで登録する必要があります！", ephemeral=True)
-            return
-        if self.team_id not in self.db.teams:
+        if self.team_id not in self.cog.teams:
             await interaction.response.send_message("このチーム募集は既に終了しています。", ephemeral=True)
             return
-        if user_id not in self.db.teams[self.team_id]['members']:
-            role_view = RoleSelectionView(self.team_id, self.voice_channel, self.cog, self.db, self.ROLE_NAMES)
+        if user_id not in self.cog.teams[self.team_id].members:
+            role_view = RoleSelectionView(self.team_id, self.voice_channel, self.cog)
             await interaction.response.send_message("ロールを選択してください:", view=role_view, ephemeral=True)
             return
         # 参加予定リストに追加
         self.cog.pending_joins[user_id] = {
             'team_id': self.team_id,
             'voice_channel': self.voice_channel,
-            'timestamp': discord.utils.utcnow()
+            'timestamp': datetime.utcnow()
         }
         await interaction.response.send_message("VCに参加すると自動で移動します。", ephemeral=True)
 
     async def show_members_button(self, interaction: discord.Interaction):
-        if self.team_id not in self.db.teams:
+        if self.team_id not in self.cog.teams:
             await interaction.response.send_message("このチーム募集は既に終了しています。", ephemeral=True)
             return
-        team_data = self.db.teams[self.team_id]
+        team_data = self.cog.teams[self.team_id]
         embed = discord.Embed(
             title="チームメンバー",
             color=discord.Color.blue()
         )
-        for member_id, role in team_data['members'].items():
-            if member_id in self.db.users:
-                user_data = self.db.users[member_id]
-                member = interaction.guild.get_member(int(member_id))
-                member_name = member.display_name if member else "不明"
-                rank_info = user_data['rank_info']
-                rank_display = get_rank_display(rank_info)
-                embed.add_field(
-                    name=f"{member_name} ({self.ROLE_NAMES.get(role, role)})",
-                    value=f"サモナー名: {user_data['summoner_name']}\nランク: {rank_display}",
-                    inline=False
-                )
+        for member_id, role in team_data.members.items():
+            member = interaction.guild.get_member(int(member_id))
+            member_name = member.display_name if member else "不明"
+            embed.add_field(
+                name=f"{member_name} ({self.cog.ROLE_NAMES.get(role, role)})",
+                value=f"ロール: {self.cog.ROLE_NAMES.get(role, role)}",
+                inline=False
+            )
         voice_channel = self.voice_channel
         if voice_channel:
             vc_members = [m.display_name for m in voice_channel.members]
@@ -84,13 +89,11 @@ class TeamRecruitmentView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class RoleSelectionView(discord.ui.View):
-    def __init__(self, team_id, voice_channel, cog, db, ROLE_NAMES):
+    def __init__(self, team_id: str, voice_channel: discord.VoiceChannel, cog):
         super().__init__()
         self.team_id = team_id
         self.voice_channel = voice_channel
-        self.cog = cog  # TeamCogインスタンス
-        self.db = db
-        self.ROLE_NAMES = ROLE_NAMES
+        self.cog = cog
 
     @discord.ui.button(label="TOP", style=discord.ButtonStyle.primary)
     async def top_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -118,26 +121,25 @@ class RoleSelectionView(discord.ui.View):
 
     async def join_team(self, interaction: discord.Interaction, role):
         user_id = str(interaction.user.id)
-        if self.team_id not in self.db.teams:
+        if self.team_id not in self.cog.teams:
             await interaction.response.send_message("このチーム募集は既に終了しています。", ephemeral=True)
             return
-        self.db.teams[self.team_id]['members'][user_id] = role
-        self.db.save_data()
-        await interaction.response.send_message(f"チームに参加しました！ロール: **{self.ROLE_NAMES.get(role, role)}**", ephemeral=True)
+        self.cog.teams[self.team_id].members[user_id] = role
+        await interaction.response.send_message(f"チームに参加しました！ロール: **{self.cog.ROLE_NAMES[role]}**", ephemeral=True)
         # 参加予定リストに追加
         self.cog.pending_joins[user_id] = {
             'team_id': self.team_id,
             'voice_channel': self.voice_channel,
-            'timestamp': discord.utils.utcnow()
+            'timestamp': datetime.utcnow()
         }
         await interaction.followup.send("VCに参加すると自動で移動します。", ephemeral=True)
 
 class TeamCog(commands.Cog):
-    def __init__(self, bot, db, ROLE_NAMES, GAME_TYPES):
+    def __init__(self, bot, ROLE_NAMES, GAME_TYPES):
         self.bot = bot
-        self.db = db
         self.ROLE_NAMES = ROLE_NAMES
         self.GAME_TYPES = GAME_TYPES
+        self.teams: Dict[str, Team] = {}
         self.check_empty_vcs.start()
         self.bot.add_listener(self.on_voice_state_update)
         self.pending_joins = {}  # 参加予定ユーザーを管理する辞書
@@ -166,19 +168,39 @@ class TeamCog(commands.Cog):
             app_commands.Choice(name="制限なし", value="0")
         ]
     )
-    async def create_team(self, interaction: discord.Interaction, purpose: app_commands.Choice[str], main_lane: app_commands.Choice[str], recruitment_count: app_commands.Choice[str]):
-        user_id = str(interaction.user.id)
-        allowed_channels = {
-            "ranked": 1368909351791890532,
-            "normal": 1368907113954279526,
-            "other": 1368909399162224691
-        }
-        if interaction.channel.id != allowed_channels[purpose.value]:
-            await interaction.response.send_message("このモードはこのチャンネルでのみ使用できます。", ephemeral=True)
+    async def create_team(self, interaction: discord.Interaction, purpose: app_commands.Choice[str], main_lane: app_commands.Choice[str], recruitment_count: app_commands.Choice[str], summoner_name: str, tag: str):
+        user_id = interaction.user.id
+
+        # Riot APIから最新サモナー情報取得
+        account_info = get_summoner_by_riot_id(summoner_name, tag)
+        if not account_info:
+            await interaction.response.send_message("サモナーが見つかりませんでした。", ephemeral=True)
             return
-        if user_id not in self.db.users:
-            await interaction.response.send_message("先に /register コマンドで登録してください！", ephemeral=True)
+        summoner_info = get_summoner_by_puuid(account_info['puuid'])
+        if not summoner_info:
+            await interaction.response.send_message("サモナー情報の取得に失敗しました。", ephemeral=True)
             return
+        league_info = get_league_info(summoner_info['id'])
+        # ソロランクを優先
+        rank_display = "不明"
+        rank_emoji = ""
+        if league_info:
+            solo = next((q for q in league_info if q['queueType'] == 'RANKED_SOLO_5x5'), None)
+            if solo:
+                tier = solo['tier']
+                rank = solo['rank']
+                rank_display = f"{tier.title()} {rank}"
+                if tier.upper() == "BRONZE":
+                    rank_emoji = get_rank_emoji(tier)
+            else:
+                q = league_info[0]
+                tier = q['tier']
+                rank = q['rank']
+                rank_display = f"{tier.title()} {rank}"
+                if tier.upper() == "BRONZE":
+                    rank_emoji = get_rank_emoji(tier)
+        display_name = f"{account_info['gameName']}#{account_info['tagLine']}"
+
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name="チームボイスチャンネル")
         if not category:
@@ -194,48 +216,49 @@ class TeamCog(commands.Cog):
         except discord.Forbidden:
             await interaction.response.send_message("ボイスチャンネルを作成する権限がありません。管理者に連絡してください。", ephemeral=True)
             return
-        team_id = f"team_{len(self.db.teams) + 1}"
-        self.db.teams[team_id] = {
-            'creator_id': user_id,
-            'purpose': purpose.value,
-            'voice_channel_id': voice_channel.id,
-            'members': {user_id: main_lane.value},
-            'created_at': discord.utils.utcnow().isoformat(),
-            'recruitment_count': recruitment_count.value
-        }
-        self.db.save_data()
-        user_data = self.db.users[user_id]
+
+        team_id = f"team_{len(self.teams) + 1}"
+        team = Team(
+            creator_id=str(user_id),
+            purpose=purpose.value,
+            voice_channel_id=voice_channel.id,
+            members={str(user_id): main_lane.value},
+            created_at=datetime.utcnow().isoformat(),
+            recruitment_count=recruitment_count.value
+        )
+        self.teams[team_id] = team
+
         embed = discord.Embed(
             title=f"チーム募集: {self.GAME_TYPES.get(purpose.value, purpose.name)}ゲーム",
-            description=f"作成者: {interaction.user.mention} ({user_data['summoner_name']})",
+            description=f"作成者: {interaction.user.mention} ({display_name})",
             color=discord.Color.green()
         )
-        rank_display = get_rank_display(user_data['rank_info'])
-        embed.add_field(name="作成者のランク", value=rank_display, inline=False)
+        if rank_emoji:
+            embed.add_field(name="作成者のランク", value=f"{rank_emoji} {rank_display}", inline=False)
+        else:
+            embed.add_field(name="作成者のランク", value=rank_display, inline=False)
         embed.add_field(name="作成者のロール", value=self.ROLE_NAMES[main_lane.value], inline=False)
         embed.add_field(name="募集人数", value="制限なし" if recruitment_count.value == "0" else f"{recruitment_count.value}人", inline=False)
         embed.add_field(name="ボイスチャンネル", value=voice_channel.mention, inline=False)
-        image_url = get_rank_image_url(user_data['rank_info'])
-        if image_url:
-            embed.set_thumbnail(url=image_url)
-        view = TeamRecruitmentView(team_id, voice_channel, self, self.db, self.ROLE_NAMES)
+        
+        view = TeamRecruitmentView(team_id, voice_channel, self)
         response = await interaction.response.send_message(embed=embed, view=view)
         sent_message = await interaction.original_response()
-        self.db.teams[team_id]['message_id'] = sent_message.id
-        self.db.save_data()
+        self.teams[team_id].message_id = sent_message.id
 
     @tasks.loop(seconds=30)
     async def check_empty_vcs(self):
         await self.bot.wait_until_ready()
-        current_time = discord.utils.utcnow()
-        for team_id, team_data in list(self.db.teams.items()):
-            voice_channel = self.bot.get_channel(team_data['voice_channel_id'])
+        current_time = datetime.utcnow()
+        for team_id, team in list(self.teams.items()):
+            voice_channel = self.bot.get_channel(team.voice_channel_id)
             if voice_channel:
-                created_at = discord.utils.utcnow().fromisoformat(team_data['created_at'])
+                created_at = datetime.fromisoformat(team.created_at)
                 time_diff = (current_time - created_at).total_seconds()
                 if len(voice_channel.members) == 0 and time_diff > 300:
                     print(f"VC {voice_channel.name} を削除します。作成から {time_diff} 秒経過")
-                    await self.delete_team_vc(voice_channel)
+                    await voice_channel.delete()
+                    del self.teams[team_id]
 
     async def on_voice_state_update(self, member, before, after):
         user_id = str(member.id)
@@ -250,7 +273,7 @@ class TeamCog(commands.Cog):
         
         # 既存のVC削除処理
         if before.channel and before.channel.category:
-            is_team_vc = any(team_data['voice_channel_id'] == before.channel.id for team_data in self.db.teams.values())
+            is_team_vc = any(team_data.voice_channel_id == before.channel.id for team_data in self.teams.values())
             if is_team_vc:
                 if len(before.channel.members) == 0:
                     print(f"VC {before.channel.name} が空になりました。5分後に削除を試みます。")
@@ -262,9 +285,9 @@ class TeamCog(commands.Cog):
     async def delete_team_vc(self, channel):
         print(f"VC {channel.name} を削除します。")
         try:
-            for team_id, team_data in list(self.db.teams.items()):
-                if team_data['voice_channel_id'] == channel.id:
-                    message_id = team_data.get('message_id')
+            for team_id, team_data in list(self.teams.items()):
+                if team_data.voice_channel_id == channel.id:
+                    message_id = team_data.message_id
                     if message_id:
                         try:
                             recruitment_channel = None
@@ -278,7 +301,7 @@ class TeamCog(commands.Cog):
                                         continue
                             if recruitment_channel:
                                 msg = await recruitment_channel.fetch_message(message_id)
-                                view = TeamRecruitmentView(team_id, channel, self, self.db, self.ROLE_NAMES)
+                                view = TeamRecruitmentView(team_id, channel, self)
                                 for item in view.children:
                                     item.disabled = True
                                 embed = msg.embeds[0]
@@ -286,8 +309,7 @@ class TeamCog(commands.Cog):
                                 await msg.edit(embed=embed, view=view)
                         except Exception as e:
                             print(f"メッセージ更新エラー: {e}")
-                    del self.db.teams[team_id]
-                    self.db.save_data()
+                    del self.teams[team_id]
                     print(f"チームデータ {team_id} を削除しました。")
                     break
             await channel.delete()
@@ -298,6 +320,5 @@ class TeamCog(commands.Cog):
             print(f"VC削除エラー: {e}")
 
 async def setup(bot):
-    from utils.db import Database
-    from bot import db, ROLE_NAMES, GAME_TYPES
-    await bot.add_cog(TeamCog(bot, db, ROLE_NAMES, GAME_TYPES)) 
+    from bot import ROLE_NAMES, GAME_TYPES
+    await bot.add_cog(TeamCog(bot, ROLE_NAMES, GAME_TYPES)) 
