@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from utils.riot_api import get_summoner_by_riot_id, get_summoner_by_puuid, get_league_info, get_profile_icon_url
+from utils.helper import RANK_EMOJIS
 from typing import Dict, Tuple
 import json
 import os
@@ -11,58 +12,72 @@ class LoLCog(commands.Cog):
         self.data_file = 'data/summoner_data.json'
         self.summoner_map: Dict[int, Tuple[str, str]] = {}  # user_id: (name, tag)
         self.reverse_summoner_map: Dict[Tuple[str, str], int] = {}  # (name, tag): user_id
-        self.RANK_EMOJIS = {
-            "IRON": "<:Iron:1338975778884288552>",
-            "BRONZE": "<:Bronze:1338975778884288552>",
-            "SILVER": "<:Silver:1338975778884288552>",
-            "GOLD": "<:Gold:1338975778884288552>",
-            "PLATINUM": "<:Platinum:1338975778884288552>",
-            "DIAMOND": "<:Diamond:1338975778884288552>",
-            "MASTER": "<:Master:1338975778884288552>",
-            "GRANDMASTER": "<:Grandmaster:1338975778884288552>",
-            "CHALLENGER": "<:Challenger:1338975778884288552>"
-        }
+        self.RANK_EMOJIS = RANK_EMOJIS  # helper.pyから共通のランク絵文字を使用
         self.load_data()
 
+    def clear_all_data(self):
+        """全てのデータを完全にクリアする"""
+        self.summoner_map.clear()
+        self.reverse_summoner_map.clear()
+        self.delete_data_file()
+        self.save_data()  # 空のデータを保存して整合性を保つ
+
     def load_data(self):
+        """データファイルからデータを読み込む"""
         try:
             if os.path.exists(self.data_file):
                 with open(self.data_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self.summoner_map = {int(k): tuple(v) for k, v in data['summoner_map'].items()}
-                    self.reverse_summoner_map = {tuple(k.split('|')): int(v) for k, v in data['reverse_map'].items()}
+                    self.summoner_map = {int(k): tuple(v) for k, v in data.get('summoner_map', {}).items()}
+                    self.reverse_summoner_map = {tuple(k.split('|')): int(v) for k, v in data.get('reverse_map', {}).items()}
         except Exception as e:
             print(f"データ読み込みエラー: {e}")
-            # エラーが発生した場合、データをリセット
-            self.summoner_map.clear()
-            self.reverse_summoner_map.clear()
-            self.delete_data_file()
+            self.clear_all_data()
 
     def save_data(self):
+        """現在のデータをファイルに保存する"""
         try:
             os.makedirs('data', exist_ok=True)
-            with open(self.data_file, 'w', encoding='utf-8') as f:
-                data = {
-                    'summoner_map': {str(k): list(v) for k, v in self.summoner_map.items()},
-                    'reverse_map': {f"{k[0]}|{k[1]}": str(v) for k, v in self.reverse_summoner_map.items()}
-                }
+            data = {
+                'summoner_map': {str(k): list(v) for k, v in self.summoner_map.items()},
+                'reverse_map': {f"{k[0]}|{k[1]}": str(v) for k, v in self.reverse_summoner_map.items()}
+            }
+            # 一時ファイルに書き込んでから移動
+            temp_file = f"{self.data_file}.tmp"
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(temp_file, self.data_file)
         except Exception as e:
             print(f"データ保存エラー: {e}")
+            if os.path.exists(f"{self.data_file}.tmp"):
+                try:
+                    os.remove(f"{self.data_file}.tmp")
+                except:
+                    pass
 
     def delete_data_file(self):
+        """データファイルとディレクトリを削除する"""
         try:
             if os.path.exists(self.data_file):
                 os.remove(self.data_file)
+            if os.path.exists(f"{self.data_file}.tmp"):
+                os.remove(f"{self.data_file}.tmp")
             if os.path.exists('data') and not os.listdir('data'):
-                os.rmdir('data')
+                try:
+                    os.rmdir('data')
+                except Exception as e:
+                    print(f"データディレクトリ削除エラー: {e}")
         except Exception as e:
             print(f"データファイル削除エラー: {e}")
+
+    def is_registered(self, user_id: int) -> bool:
+        """ユーザーが登録済みかどうかを確認する"""
+        return user_id in self.summoner_map
 
     @commands.hybrid_command(name="unregister", description="登録したサモナー情報を削除します")
     async def unregister(self, ctx):
         user_id = ctx.author.id
-        if user_id not in self.summoner_map:
+        if not self.is_registered(user_id):
             await ctx.send("登録されているサモナー情報がありません。", ephemeral=True)
             return
 
@@ -70,29 +85,19 @@ class LoLCog(commands.Cog):
             name, tag = self.summoner_map[user_id]
             del self.reverse_summoner_map[(name, tag)]
             del self.summoner_map[user_id]
-            
-            # データが空になった場合、ファイルを削除
-            if not self.summoner_map:
-                self.delete_data_file()
-            else:
-                self.save_data()
-                
+            self.save_data()
             await ctx.send("サモナー情報を削除しました。", ephemeral=True)
         except Exception as e:
             print(f"アカウント削除エラー: {e}")
-            await ctx.send("サモナー情報の削除中にエラーが発生しました。", ephemeral=True)
+            # エラー時は完全にクリア
+            self.clear_all_data()
+            await ctx.send("サモナー情報を削除しました。", ephemeral=True)
 
     @commands.hybrid_command(name="clean", description="全てのサモナー情報をリセットします")
     @commands.has_permissions(administrator=True)
     async def clean(self, ctx):
         try:
-            # メモリ上のデータをクリア
-            self.summoner_map.clear()
-            self.reverse_summoner_map.clear()
-            
-            # データファイルを削除
-            self.delete_data_file()
-            
+            self.clear_all_data()
             await ctx.send("全てのサモナー情報をリセットしました。", ephemeral=True)
         except Exception as e:
             print(f"データクリーンアップエラー: {e}")
@@ -107,7 +112,7 @@ class LoLCog(commands.Cog):
     async def lol(self, ctx, summoner_name: str, tag: str):
         await ctx.defer()
         try:
-            # サモナー名・タグの存在確認のみAPIで行う
+            # サモナー名・タグの存在確認
             account_info = get_summoner_by_riot_id(summoner_name, tag)
             if not account_info:
                 await ctx.send("サモナーが見つかりませんでした。", ephemeral=True)
@@ -118,18 +123,16 @@ class LoLCog(commands.Cog):
             summoner_key = (game_name, tag_line)
 
             # 他のユーザーが既に登録しているか確認
-            if summoner_key in self.reverse_summoner_map:
-                existing_user_id = self.reverse_summoner_map[summoner_key]
-                if existing_user_id != ctx.author.id:
-                    existing_user = ctx.guild.get_member(existing_user_id)
-                    existing_user_name = existing_user.display_name if existing_user else "別のユーザー"
-                    await ctx.send(f"このサモナー名は既に {existing_user_name} によって登録されています。", ephemeral=True)
-                    return
+            if summoner_key in self.reverse_summoner_map and self.reverse_summoner_map[summoner_key] != ctx.author.id:
+                existing_user = ctx.guild.get_member(self.reverse_summoner_map[summoner_key])
+                existing_user_name = existing_user.display_name if existing_user else "別のユーザー"
+                await ctx.send(f"このサモナー名は既に {existing_user_name} によって登録されています。", ephemeral=True)
+                return
 
             # 自分が既に別のアカウントを登録しているか確認
-            if ctx.author.id in self.summoner_map:
+            if self.is_registered(ctx.author.id):
                 old_name, old_tag = self.summoner_map[ctx.author.id]
-                # 同じアカウントの場合は早期リターン
+                # 同じアカウントの場合は情報を表示
                 if old_name == game_name and old_tag == tag_line:
                     await self.display_summoner_info(ctx, game_name, tag_line)
                     return
@@ -140,7 +143,7 @@ class LoLCog(commands.Cog):
                     if interaction.user.id != ctx.author.id:
                         await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
                         return
-                    # 古いアカウントの逆引きを削除
+                    # 古いデータを削除
                     old_key = (old_name, old_tag)
                     if old_key in self.reverse_summoner_map:
                         del self.reverse_summoner_map[old_key]
@@ -176,8 +179,11 @@ class LoLCog(commands.Cog):
             self.reverse_summoner_map[summoner_key] = ctx.author.id
             self.save_data()
             await self.display_summoner_info(ctx, game_name, tag_line)
+
         except Exception as e:
             print(f"アカウント登録エラー: {e}")
+            # エラー時はデータをクリア
+            self.clear_all_data()
             await ctx.send("アカウント登録中にエラーが発生しました。", ephemeral=True)
 
     async def display_summoner_info(self, ctx, game_name: str, tag_line: str, edit_message: bool = False):
