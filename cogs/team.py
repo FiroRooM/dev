@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from utils.helper import get_rank_display, get_rank_image_url, get_rank_emoji
+from utils.helper import get_rank_display, get_rank_image_url, get_rank_emoji, get_profile_icon_url
 from utils.riot_api import get_summoner_by_riot_id, get_summoner_by_puuid, get_league_info
 import asyncio
 from typing import Dict, Any
@@ -183,83 +183,104 @@ class TeamCog(commands.Cog):
             await interaction.response.send_message("LoLCogが読み込まれていません。", ephemeral=True)
             return
 
-        if user_id not in lol_cog.summoner_map:
+        if not hasattr(lol_cog, 'summoner_map') or user_id not in lol_cog.summoner_map:
             await interaction.response.send_message("先に /lol コマンドでサモナー名を登録してください。", ephemeral=True)
             return
-        
+
         summoner_name, tag = lol_cog.summoner_map[user_id]
-        # Riot APIから最新サモナー情報取得
-        account_info = get_summoner_by_riot_id(summoner_name, tag)
-        if not account_info:
-            await interaction.response.send_message("サモナーが見つかりませんでした。", ephemeral=True)
-            return
-        summoner_info = get_summoner_by_puuid(account_info['puuid'])
-        if not summoner_info:
-            await interaction.response.send_message("サモナー情報の取得に失敗しました。", ephemeral=True)
-            return
-        league_info = get_league_info(summoner_info['id'])
-        # ソロランクを優先
-        rank_display = "不明"
-        rank_emoji = ""
-        if league_info:
-            solo = next((q for q in league_info if q['queueType'] == 'RANKED_SOLO_5x5'), None)
-            if solo:
-                tier = solo['tier']
-                rank = solo['rank']
-                rank_display = f"{tier.title()} {rank}"
-                rank_emoji = lol_cog.RANK_EMOJIS.get(tier, "")
-            else:
-                q = league_info[0]
-                tier = q['tier']
-                rank = q['rank']
-                rank_display = f"{tier.title()} {rank}"
-                rank_emoji = lol_cog.RANK_EMOJIS.get(tier, "")
-        display_name = f"{account_info['gameName']}#{account_info['tagLine']}"
-
-        guild = interaction.guild
-        category = discord.utils.get(guild.categories, name="チームボイスチャンネル")
-        if not category:
-            try:
-                category = await guild.create_category("チームボイスチャンネル")
-            except discord.Forbidden:
-                await interaction.response.send_message("チャンネルを作成する権限がありません。管理者に連絡してください。", ephemeral=True)
-                return
-        channel_name = f"{interaction.user.display_name}の{self.GAME_TYPES.get(purpose.value, purpose.name)}チーム"
-        user_limit = None if recruitment_count.value == "0" else int(recruitment_count.value) + 1
-        try:
-            voice_channel = await guild.create_voice_channel(name=channel_name, category=category, user_limit=user_limit)
-        except discord.Forbidden:
-            await interaction.response.send_message("ボイスチャンネルを作成する権限がありません。管理者に連絡してください。", ephemeral=True)
-            return
-
-        team_id = f"team_{len(self.teams) + 1}"
-        team = Team(
-            creator_id=str(user_id),
-            purpose=purpose.value,
-            voice_channel_id=voice_channel.id,
-            members={str(user_id): main_lane.value},
-            created_at=datetime.utcnow().isoformat(),
-            recruitment_count=recruitment_count.value
-        )
-        self.teams[team_id] = team
-
-        embed = discord.Embed(
-            title=f"チーム募集: {self.GAME_TYPES.get(purpose.value, purpose.name)}ゲーム",
-            description=f"作成者: {interaction.user.mention} ({display_name})",
-            color=discord.Color.green()
-        )
-        if rank_emoji:
-            embed.add_field(name="作成者のランク", value=f"{rank_emoji} {rank_display}", inline=False)
-        else:
-            embed.add_field(name="作成者のランク", value=rank_display, inline=False)
-        embed.add_field(name="作成者のロール", value=self.ROLE_NAMES[main_lane.value], inline=False)
-        embed.add_field(name="募集人数", value="制限なし" if recruitment_count.value == "0" else f"{recruitment_count.value}人", inline=False)
-        embed.add_field(name="ボイスチャンネル", value=voice_channel.mention, inline=False)
         
-        view = TeamRecruitmentView(team_id, voice_channel, self)
-        response = await interaction.response.send_message(embed=embed, view=view)
-        sent_message = await interaction.original_response()
-        self.teams[team_id].message_id = sent_message.id
+        try:
+            # Riot APIから最新サモナー情報取得
+            account_info = get_summoner_by_riot_id(summoner_name, tag)
+            if not account_info:
+                await interaction.response.send_message("サモナー情報の取得に失敗しました。", ephemeral=True)
+                return
+
+            summoner_info = get_summoner_by_puuid(account_info['puuid'])
+            if not summoner_info:
+                await interaction.response.send_message("サモナー情報の取得に失敗しました。", ephemeral=True)
+                return
+
+            league_info = get_league_info(summoner_info['id'])
+            
+            # ソロランクを優先
+            rank_display = "不明"
+            rank_emoji = ""
+            if league_info:
+                solo = next((q for q in league_info if q['queueType'] == 'RANKED_SOLO_5x5'), None)
+                if solo:
+                    tier = solo['tier']
+                    rank = solo['rank']
+                    rank_display = f"{tier} {rank}"
+                    rank_emoji = lol_cog.RANK_EMOJIS.get(tier, "")
+                else:
+                    q = league_info[0]
+                    tier = q['tier']
+                    rank = q['rank']
+                    rank_display = f"{tier} {rank}"
+                    rank_emoji = lol_cog.RANK_EMOJIS.get(tier, "")
+
+            display_name = f"{account_info['gameName']}#{account_info['tagLine']}"
+
+            # VCチャンネル作成
+            guild = interaction.guild
+            category = discord.utils.get(guild.categories, name="チームボイスチャンネル")
+            if not category:
+                try:
+                    category = await guild.create_category("チームボイスチャンネル")
+                except discord.Forbidden:
+                    await interaction.response.send_message("チャンネルを作成する権限がありません。管理者に連絡してください。", ephemeral=True)
+                    return
+
+            channel_name = f"{interaction.user.display_name}の{self.GAME_TYPES.get(purpose.value, purpose.name)}チーム"
+            user_limit = None if recruitment_count.value == "0" else int(recruitment_count.value) + 1
+
+            try:
+                voice_channel = await guild.create_voice_channel(name=channel_name, category=category, user_limit=user_limit)
+            except discord.Forbidden:
+                await interaction.response.send_message("ボイスチャンネルを作成する権限がありません。管理者に連絡してください。", ephemeral=True)
+                return
+
+            team_id = f"team_{len(self.teams) + 1}"
+            team = Team(
+                creator_id=str(user_id),
+                purpose=purpose.value,
+                voice_channel_id=voice_channel.id,
+                members={str(user_id): main_lane.value},
+                created_at=datetime.utcnow().isoformat(),
+                recruitment_count=recruitment_count.value
+            )
+            self.teams[team_id] = team
+
+            embed = discord.Embed(
+                title=f"チーム募集: {self.GAME_TYPES.get(purpose.value, purpose.name)}ゲーム",
+                description=f"作成者: {interaction.user.mention} ({display_name})",
+                color=discord.Color.green()
+            )
+
+            if rank_emoji:
+                embed.add_field(name="作成者のランク", value=f"{rank_emoji} {rank_display}", inline=False)
+            else:
+                embed.add_field(name="作成者のランク", value=rank_display, inline=False)
+
+            embed.add_field(name="作成者のロール", value=self.ROLE_NAMES[main_lane.value], inline=False)
+            embed.add_field(name="募集人数", value="制限なし" if recruitment_count.value == "0" else f"{recruitment_count.value}人", inline=False)
+            embed.add_field(name="ボイスチャンネル", value=voice_channel.mention, inline=False)
+
+            # プロフィールアイコンを設定
+            icon_url = get_profile_icon_url(summoner_info['profileIconId'])
+            embed.set_thumbnail(url=icon_url)
+
+            view = TeamRecruitmentView(team_id, voice_channel, self)
+            await interaction.response.send_message(embed=embed, view=view)
+            sent_message = await interaction.original_response()
+            self.teams[team_id].message_id = sent_message.id
+
+        except Exception as e:
+            print(f"チーム作成エラー: {e}")
+            if 'voice_channel' in locals():
+                await voice_channel.delete()
+            await interaction.response.send_message("チーム作成中にエラーが発生しました。", ephemeral=True)
 
     @tasks.loop(seconds=30)
     async def check_empty_vcs(self):
