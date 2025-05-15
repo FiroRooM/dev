@@ -1,8 +1,8 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from utils.helper import get_rank_display, get_rank_image_url, get_rank_emoji, get_profile_icon_url
-from utils.riot_api import get_summoner_by_riot_id, get_summoner_by_puuid, get_league_info
+from utils.helper import get_rank_display, get_rank_image_url, get_rank_emoji
+from utils.riot_api import get_summoner_by_riot_id, get_summoner_by_puuid, get_league_info, get_profile_icon_url
 import asyncio
 from typing import Dict, Any
 from dataclasses import dataclass, asdict
