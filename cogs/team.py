@@ -267,9 +267,13 @@ class TeamCog(commands.Cog):
             embed.add_field(name="募集人数", value="制限なし" if recruitment_count.value == "0" else f"{recruitment_count.value}人", inline=False)
             embed.add_field(name="ボイスチャンネル", value=voice_channel.mention, inline=False)
 
-            # プロフィールアイコンを設定
-            icon_url = get_profile_icon_url(summoner_info['profileIconId'])
-            embed.set_thumbnail(url=icon_url)
+            # プロフィールアイコンを設定（必ずアイコンを表示）
+            try:
+                icon_url = get_profile_icon_url(summoner_info['profileIconId'])
+                if icon_url:
+                    embed.set_thumbnail(url=icon_url)
+            except Exception as e:
+                print(f"プロフィールアイコン取得エラー: {e}")
 
             view = TeamRecruitmentView(team_id, voice_channel, self)
             await interaction.response.send_message(embed=embed, view=view)
@@ -279,7 +283,10 @@ class TeamCog(commands.Cog):
         except Exception as e:
             print(f"チーム作成エラー: {e}")
             if 'voice_channel' in locals():
-                await voice_channel.delete()
+                try:
+                    await voice_channel.delete()
+                except:
+                    pass
             await interaction.response.send_message("チーム作成中にエラーが発生しました。", ephemeral=True)
 
     @tasks.loop(seconds=30)
