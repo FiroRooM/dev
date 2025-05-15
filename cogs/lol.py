@@ -140,81 +140,90 @@ class LoLCog(commands.Cog):
         await self.display_summoner_info(ctx, game_name, tag_line)
 
     async def display_summoner_info(self, ctx, game_name: str, tag_line: str, edit_message: bool = False):
-        account_info = get_summoner_by_riot_id(game_name, tag_line)
-        if not account_info:
-            await ctx.send("サモナー情報の取得に失敗しました。", ephemeral=True)
-            return
-        
-        summoner_info = get_summoner_by_puuid(account_info['puuid'])
-        if not summoner_info:
-            await ctx.send("サモナー情報の取得に失敗しました。", ephemeral=True)
-            return
-
-        embed = discord.Embed(
-            title="=== サモナー情報 ===",
-            color=discord.Color.blue()
-        )
-        
-        # サモナー基本情報
-        embed.add_field(
-            name="名前",
-            value=f"{account_info['gameName']}#{account_info['tagLine']}",
-            inline=False
-        )
-        embed.add_field(
-            name="レベル",
-            value=str(summoner_info['summonerLevel']),
-            inline=False
-        )
-        embed.set_thumbnail(url=get_profile_icon_url(summoner_info['profileIconId']))
-
-        # ランク情報
-        league_info = get_league_info(summoner_info['id'])
-        if league_info:
-            embed.add_field(name="\n=== ランク情報 ===", value="", inline=False)
+        try:
+            account_info = get_summoner_by_riot_id(game_name, tag_line)
+            if not account_info:
+                await ctx.send("サモナー情報の取得に失敗しました。", ephemeral=True)
+                return
             
-            # ソロランク情報
-            solo_rank = next((q for q in league_info if q['queueType'] == 'RANKED_SOLO_5x5'), None)
-            if solo_rank:
-                tier = solo_rank['tier']
-                rank = solo_rank['rank']
-                lp = solo_rank['leaguePoints']
-                wins = solo_rank['wins']
-                losses = solo_rank['losses']
-                winrate = (wins / (wins + losses)) * 100 if wins + losses > 0 else 0
-                
-                rank_emoji = self.RANK_EMOJIS.get(tier, "")
-                embed.add_field(
-                    name="ソロランク",
-                    value=f"ランク: {rank_emoji} {tier} {rank} ({lp}LP)\n"
-                          f"戦績: {wins}勝 {losses}敗 (勝率: {winrate:.1f}%)",
-                    inline=False
-                )
+            summoner_info = get_summoner_by_puuid(account_info['puuid'])
+            if not summoner_info:
+                await ctx.send("サモナー情報の取得に失敗しました。", ephemeral=True)
+                return
 
-            # フレックスランク情報
-            flex_rank = next((q for q in league_info if q['queueType'] == 'RANKED_FLEX_SR'), None)
-            if flex_rank:
-                tier = flex_rank['tier']
-                rank = flex_rank['rank']
-                lp = flex_rank['leaguePoints']
-                wins = flex_rank['wins']
-                losses = flex_rank['losses']
-                winrate = (wins / (wins + losses)) * 100 if wins + losses > 0 else 0
-                
-                rank_emoji = self.RANK_EMOJIS.get(tier, "")
-                embed.add_field(
-                    name="フレックスランク",
-                    value=f"ランク: {rank_emoji} {tier} {rank} ({lp}LP)\n"
-                          f"戦績: {wins}勝 {losses}敗 (勝率: {winrate:.1f}%)",
-                    inline=False
-                )
-        else:
-            embed.add_field(name="ランク情報", value="ランク情報なし", inline=False)
+            embed = discord.Embed(
+                title="=== サモナー情報 ===",
+                color=discord.Color.blue()
+            )
+            
+            # サモナー基本情報
+            embed.add_field(
+                name="名前",
+                value=f"{account_info['gameName']}#{account_info['tagLine']}",
+                inline=False
+            )
+            embed.add_field(
+                name="レベル",
+                value=str(summoner_info['summonerLevel']),
+                inline=False
+            )
 
-        if edit_message:
-            await ctx.response.edit_message(content=None, embed=embed, view=None)
-        else:
-            await ctx.send(embed=embed, ephemeral=True)
+            # プロフィールアイコンを設定（必ずアイコンを表示）
+            try:
+                icon_url = get_profile_icon_url(summoner_info['profileIconId'])
+                if icon_url:
+                    embed.set_thumbnail(url=icon_url)
+            except Exception as e:
+                print(f"プロフィールアイコン取得エラー: {e}")
+
+            # ランク情報
+            league_info = get_league_info(summoner_info['id'])
+            if league_info:
+                # ソロランク情報
+                solo_rank = next((q for q in league_info if q['queueType'] == 'RANKED_SOLO_5x5'), None)
+                if solo_rank:
+                    tier = solo_rank['tier']
+                    rank = solo_rank['rank']
+                    lp = solo_rank['leaguePoints']
+                    wins = solo_rank['wins']
+                    losses = solo_rank['losses']
+                    winrate = (wins / (wins + losses)) * 100 if wins + losses > 0 else 0
+                    
+                    rank_emoji = self.RANK_EMOJIS.get(tier, "")
+                    embed.add_field(
+                        name="ソロランク",
+                        value=f"{rank_emoji} {tier} {rank} ({lp}LP)\n"
+                              f"戦績: {wins}勝 {losses}敗 (勝率: {winrate:.1f}%)",
+                        inline=False
+                    )
+
+                # フレックスランク情報
+                flex_rank = next((q for q in league_info if q['queueType'] == 'RANKED_FLEX_SR'), None)
+                if flex_rank:
+                    tier = flex_rank['tier']
+                    rank = flex_rank['rank']
+                    lp = flex_rank['leaguePoints']
+                    wins = flex_rank['wins']
+                    losses = flex_rank['losses']
+                    winrate = (wins / (wins + losses)) * 100 if wins + losses > 0 else 0
+                    
+                    rank_emoji = self.RANK_EMOJIS.get(tier, "")
+                    embed.add_field(
+                        name="フレックスランク",
+                        value=f"{rank_emoji} {tier} {rank} ({lp}LP)\n"
+                              f"戦績: {wins}勝 {losses}敗 (勝率: {winrate:.1f}%)",
+                        inline=False
+                    )
+            else:
+                embed.add_field(name="ランク情報", value="ランク情報なし", inline=False)
+
+            if edit_message:
+                await ctx.response.edit_message(content=None, embed=embed, view=None)
+            else:
+                await ctx.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"サモナー情報表示エラー: {e}")
+            await ctx.send("サモナー情報の表示中にエラーが発生しました。", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(LoLCog(bot)) 
