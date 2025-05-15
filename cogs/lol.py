@@ -8,6 +8,7 @@ import os
 class LoLCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.data_file = 'data/summoner_data.json'
         self.summoner_map: Dict[int, Tuple[str, str]] = {}  # user_id: (name, tag)
         self.reverse_summoner_map: Dict[Tuple[str, str], int] = {}  # (name, tag): user_id
         self.RANK_EMOJIS = {
@@ -25,18 +26,22 @@ class LoLCog(commands.Cog):
 
     def load_data(self):
         try:
-            if os.path.exists('data/summoner_data.json'):
-                with open('data/summoner_data.json', 'r', encoding='utf-8') as f:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.summoner_map = {int(k): tuple(v) for k, v in data['summoner_map'].items()}
                     self.reverse_summoner_map = {tuple(k.split('|')): int(v) for k, v in data['reverse_map'].items()}
         except Exception as e:
             print(f"データ読み込みエラー: {e}")
+            # エラーが発生した場合、データをリセット
+            self.summoner_map.clear()
+            self.reverse_summoner_map.clear()
+            self.delete_data_file()
 
     def save_data(self):
         try:
             os.makedirs('data', exist_ok=True)
-            with open('data/summoner_data.json', 'w', encoding='utf-8') as f:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
                 data = {
                     'summoner_map': {str(k): list(v) for k, v in self.summoner_map.items()},
                     'reverse_map': {f"{k[0]}|{k[1]}": str(v) for k, v in self.reverse_summoner_map.items()}
@@ -45,6 +50,15 @@ class LoLCog(commands.Cog):
         except Exception as e:
             print(f"データ保存エラー: {e}")
 
+    def delete_data_file(self):
+        try:
+            if os.path.exists(self.data_file):
+                os.remove(self.data_file)
+            if os.path.exists('data') and not os.listdir('data'):
+                os.rmdir('data')
+        except Exception as e:
+            print(f"データファイル削除エラー: {e}")
+
     @commands.hybrid_command(name="unregister", description="登録したサモナー情報を削除します")
     async def unregister(self, ctx):
         user_id = ctx.author.id
@@ -52,92 +66,119 @@ class LoLCog(commands.Cog):
             await ctx.send("登録されているサモナー情報がありません。", ephemeral=True)
             return
 
-        name, tag = self.summoner_map[user_id]
-        del self.reverse_summoner_map[(name, tag)]
-        del self.summoner_map[user_id]
-        self.save_data()
-        await ctx.send("サモナー情報を削除しました。", ephemeral=True)
+        try:
+            name, tag = self.summoner_map[user_id]
+            del self.reverse_summoner_map[(name, tag)]
+            del self.summoner_map[user_id]
+            
+            # データが空になった場合、ファイルを削除
+            if not self.summoner_map:
+                self.delete_data_file()
+            else:
+                self.save_data()
+                
+            await ctx.send("サモナー情報を削除しました。", ephemeral=True)
+        except Exception as e:
+            print(f"アカウント削除エラー: {e}")
+            await ctx.send("サモナー情報の削除中にエラーが発生しました。", ephemeral=True)
 
     @commands.hybrid_command(name="clean", description="全てのサモナー情報をリセットします")
     @commands.has_permissions(administrator=True)
     async def clean(self, ctx):
-        self.summoner_map.clear()
-        self.reverse_summoner_map.clear()
-        self.save_data()
-        await ctx.send("全てのサモナー情報をリセットしました。", ephemeral=True)
+        try:
+            # メモリ上のデータをクリア
+            self.summoner_map.clear()
+            self.reverse_summoner_map.clear()
+            
+            # データファイルを削除
+            self.delete_data_file()
+            
+            await ctx.send("全てのサモナー情報をリセットしました。", ephemeral=True)
+        except Exception as e:
+            print(f"データクリーンアップエラー: {e}")
+            await ctx.send("データのリセット中にエラーが発生しました。", ephemeral=True)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        # 起動時にデータを再読み込み
+        self.load_data()
 
     @commands.hybrid_command(name="lol", description="League of Legendsのサモナー名とタグを登録します")
     async def lol(self, ctx, summoner_name: str, tag: str):
         await ctx.defer()
-        # サモナー名・タグの存在確認のみAPIで行う
-        account_info = get_summoner_by_riot_id(summoner_name, tag)
-        if not account_info:
-            await ctx.send("サモナーが見つかりませんでした。", ephemeral=True)
-            return
-
-        game_name = account_info['gameName']
-        tag_line = account_info['tagLine']
-        summoner_key = (game_name, tag_line)
-
-        # 他のユーザーが既に登録しているか確認
-        if summoner_key in self.reverse_summoner_map:
-            existing_user_id = self.reverse_summoner_map[summoner_key]
-            if existing_user_id != ctx.author.id:
-                existing_user = ctx.guild.get_member(existing_user_id)
-                existing_user_name = existing_user.display_name if existing_user else "別のユーザー"
-                await ctx.send(f"このサモナー名は既に {existing_user_name} によって登録されています。", ephemeral=True)
+        try:
+            # サモナー名・タグの存在確認のみAPIで行う
+            account_info = get_summoner_by_riot_id(summoner_name, tag)
+            if not account_info:
+                await ctx.send("サモナーが見つかりませんでした。", ephemeral=True)
                 return
 
-        # 自分が既に別のアカウントを登録しているか確認
-        if ctx.author.id in self.summoner_map:
-            old_name, old_tag = self.summoner_map[ctx.author.id]
-            # 同じアカウントの場合は早期リターン
-            if old_name == game_name and old_tag == tag_line:
-                await ctx.send("このアカウントは既に登録されています。", ephemeral=True)
+            game_name = account_info['gameName']
+            tag_line = account_info['tagLine']
+            summoner_key = (game_name, tag_line)
+
+            # 他のユーザーが既に登録しているか確認
+            if summoner_key in self.reverse_summoner_map:
+                existing_user_id = self.reverse_summoner_map[summoner_key]
+                if existing_user_id != ctx.author.id:
+                    existing_user = ctx.guild.get_member(existing_user_id)
+                    existing_user_name = existing_user.display_name if existing_user else "別のユーザー"
+                    await ctx.send(f"このサモナー名は既に {existing_user_name} によって登録されています。", ephemeral=True)
+                    return
+
+            # 自分が既に別のアカウントを登録しているか確認
+            if ctx.author.id in self.summoner_map:
+                old_name, old_tag = self.summoner_map[ctx.author.id]
+                # 同じアカウントの場合は早期リターン
+                if old_name == game_name and old_tag == tag_line:
+                    await self.display_summoner_info(ctx, game_name, tag_line)
+                    return
+                
+                # 確認メッセージを送信
+                confirm_view = discord.ui.View(timeout=60)
+                async def confirm_callback(interaction: discord.Interaction):
+                    if interaction.user.id != ctx.author.id:
+                        await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
+                        return
+                    # 古いアカウントの逆引きを削除
+                    old_key = (old_name, old_tag)
+                    if old_key in self.reverse_summoner_map:
+                        del self.reverse_summoner_map[old_key]
+                    # 新しいアカウントを登録
+                    self.summoner_map[ctx.author.id] = (game_name, tag_line)
+                    self.reverse_summoner_map[summoner_key] = ctx.author.id
+                    self.save_data()
+                    await self.display_summoner_info(interaction, game_name, tag_line, edit_message=True)
+
+                async def cancel_callback(interaction: discord.Interaction):
+                    if interaction.user.id != ctx.author.id:
+                        await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
+                        return
+                    await interaction.response.edit_message(content="アカウントの更新をキャンセルしました。", view=None)
+
+                confirm_button = discord.ui.Button(label="更新する", style=discord.ButtonStyle.primary)
+                cancel_button = discord.ui.Button(label="キャンセル", style=discord.ButtonStyle.secondary)
+                confirm_button.callback = confirm_callback
+                cancel_button.callback = cancel_callback
+                confirm_view.add_item(confirm_button)
+                confirm_view.add_item(cancel_button)
+
+                await ctx.send(
+                    f"既に {old_name}#{old_tag} を登録済みです。\n"
+                    f"新しいアカウント {game_name}#{tag_line} に更新しますか？",
+                    view=confirm_view,
+                    ephemeral=True
+                )
                 return
-            
-            # 確認メッセージを送信
-            confirm_view = discord.ui.View(timeout=60)
-            async def confirm_callback(interaction: discord.Interaction):
-                if interaction.user.id != ctx.author.id:
-                    await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
-                    return
-                # 古いアカウントの逆引きを削除
-                old_key = (old_name, old_tag)
-                if old_key in self.reverse_summoner_map:
-                    del self.reverse_summoner_map[old_key]
-                # 新しいアカウントを登録
-                self.summoner_map[ctx.author.id] = (game_name, tag_line)
-                self.reverse_summoner_map[summoner_key] = ctx.author.id
-                self.save_data()
-                await self.display_summoner_info(interaction, game_name, tag_line, edit_message=True)
 
-            async def cancel_callback(interaction: discord.Interaction):
-                if interaction.user.id != ctx.author.id:
-                    await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
-                    return
-                await interaction.response.edit_message(content="アカウントの更新をキャンセルしました。", view=None)
-
-            confirm_button = discord.ui.Button(label="更新する", style=discord.ButtonStyle.primary)
-            cancel_button = discord.ui.Button(label="キャンセル", style=discord.ButtonStyle.secondary)
-            confirm_button.callback = confirm_callback
-            cancel_button.callback = cancel_callback
-            confirm_view.add_item(confirm_button)
-            confirm_view.add_item(cancel_button)
-
-            await ctx.send(
-                f"既に {old_name}#{old_tag} を登録済みです。\n"
-                f"新しいアカウント {game_name}#{tag_line} に更新しますか？",
-                view=confirm_view,
-                ephemeral=True
-            )
-            return
-
-        # 新規登録
-        self.summoner_map[ctx.author.id] = (game_name, tag_line)
-        self.reverse_summoner_map[summoner_key] = ctx.author.id
-        self.save_data()
-        await self.display_summoner_info(ctx, game_name, tag_line)
+            # 新規登録
+            self.summoner_map[ctx.author.id] = (game_name, tag_line)
+            self.reverse_summoner_map[summoner_key] = ctx.author.id
+            self.save_data()
+            await self.display_summoner_info(ctx, game_name, tag_line)
+        except Exception as e:
+            print(f"アカウント登録エラー: {e}")
+            await ctx.send("アカウント登録中にエラーが発生しました。", ephemeral=True)
 
     async def display_summoner_info(self, ctx, game_name: str, tag_line: str, edit_message: bool = False):
         try:
