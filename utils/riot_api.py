@@ -25,39 +25,37 @@ def get_latest_version() -> str:
 
 DDRAGON_VERSION = get_latest_version()
 
-def get_summoner_by_riot_id(game_name, tag_line):
-    if '#' in tag_line:
-        tag_line = tag_line.split('#')[1].strip()
-    url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
-    headers = {"X-Riot-Token": API_KEY}
-    try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
+def get_summoner_by_riot_id(game_name: str, tag_line: str) -> Optional[Dict]:
+    """RiotIDからサモナー情報を取得"""
+    url = f"{RIOT_API_BASE_URL}/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
+    response = requests.get(url, headers={"X-Riot-Token": API_KEY})
+    if response.status_code == 200:
         return response.json()
-    except requests.exceptions.RequestException as e:
-        return None
+    return None
 
-def get_summoner_by_puuid(puuid):
-    url = f"https://{GAME_REGION}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/{puuid}"
-    headers = {"X-Riot-Token": API_KEY}
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+def get_summoner_by_puuid(puuid: str) -> Optional[Dict]:
+    """PUUIDからサモナー情報を取得"""
+    url = f"{RIOT_API_JP_URL}/lol/summoner/v4/summoners/by-puuid/{puuid}"
+    response = requests.get(url, headers={"X-Riot-Token": API_KEY})
+    if response.status_code == 200:
         return response.json()
-    except requests.exceptions.RequestException as e:
-        return None
+    return None
 
-def get_league_info(summoner_id):
-    url = f"https://{GAME_REGION}.api.riotgames.com/lol/league/v4/entries/by-summoner/{summoner_id}"
-    headers = {"X-Riot-Token": API_KEY}
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+def get_league_info(summoner_id: str) -> Optional[List[Dict]]:
+    """サモナーIDからランク情報を取得"""
+    url = f"{RIOT_API_JP_URL}/lol/league/v4/entries/by-summoner/{summoner_id}"
+    response = requests.get(url, headers={"X-Riot-Token": API_KEY})
+    if response.status_code == 200:
         return response.json()
-    except requests.exceptions.RequestException as e:
-        return None
+    return None
+
+def get_tft_league_info(summoner_id: str) -> Optional[List[Dict]]:
+    """サモナーIDからTFTのランク情報を取得"""
+    url = f"{RIOT_API_JP_URL}/tft/league/v1/entries/by-summoner/{summoner_id}"
+    response = requests.get(url, headers={"X-Riot-Token": API_KEY})
+    if response.status_code == 200:
+        return response.json()
+    return None
 
 def get_profile_icon_url(icon_id: int) -> str:
     """プロフィールアイコンのURLを取得"""
