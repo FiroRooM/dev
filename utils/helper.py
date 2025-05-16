@@ -1,15 +1,14 @@
 RANK_EMOJIS = {
-    "IRON": "<:Iron:1338975697749803058>",
-    "BRONZE": "<:Bronze:1338975778884288552>",
-    "SILVER": "<:Silver:1338975837009088636>",
-    "GOLD": "<:Gold:1338975886287831151>",
-    "PLATINUM": "<:Platinum:1338975944521551893>",
-    "EMERALD": "<:Emerald:1338977548599820349>",
-    "DIAMOND": "<:Diamond:1338977749947383929>",
-    "UNRANKED": "<:Unranked:1338977764749086801>",
-    "MASTER": "<:Master:1368896207094812815>",
-    "GRANDMASTER": "<:Grandmaster:1368896224865947658>",
-    "CHALLENGER": "<:Challenger:1368896237025099876>"
+    "IRON": "<:RankIron:1372722873613484032>",
+    "BRONZE": "<:RankBronze:1372722862045360128>",
+    "SILVER": "<:RankSilver:1372722879766347776>",
+    "GOLD": "<:RankGold:1372722867854880778>",
+    "PLATINUM": "<:RankPlatinum:1372722871566467082>",
+    "EMERALD": "<:RankEmerald:1372722865732509696>",
+    "DIAMOND": "<:RankDiamond:1372722864436133888>",
+    "MASTER": "<:RankMaster:1372722869918392320>",
+    "GRANDMASTER": "<:RankGrandmaster:1372722869918392320>",
+    "CHALLENGER": "<:RankChallenger:1372722860854505472>"
 }
 
 RANK_IMAGE_URLS = {
@@ -26,8 +25,7 @@ RANK_IMAGE_URLS = {
     "UNRANKED": "https://static.wikia.nocookie.net/leagueoflegends/images/1/13/Season_2023_-_Unranked.png/revision/latest?cb=20231007211937"
 }
 
-def get_rank_emoji(rank_info):
-    key = rank_info.split()[0].upper()
+def get_rank_emoji(key: str) -> str:
     return RANK_EMOJIS.get(key, "")
 
 def get_rank_display(rank_info):
