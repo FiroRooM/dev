@@ -1,6 +1,6 @@
 import os
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,6 +9,8 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.voice_states = True
+
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 ROLE_NAMES = {
@@ -25,22 +27,42 @@ GAME_TYPES = {
     "normal": "ノーマル"
 }
 
-@tasks.loop(minutes=20)
-async def keep_alive():
-    print("Bot is alive - Preventing sleep")
-
 @bot.event
 async def on_ready():
-    print(f'{bot.user.name} has connected to Discord!')
-    await bot.change_presence(status=discord.Status.dnd)
-    keep_alive.start()
-    # コマンドを同期
-    print("コマンドを同期中...")
+    print(f'{bot.user} has connected to Discord!')
+    print(f"Bot ID: {bot.user.id}")
+    print(f"参加しているサーバー:")
+    for guild in bot.guilds:
+        print(f"- {guild.name} (ID: {guild.id})")
+    
     try:
-        synced = await bot.tree.sync()
-        print(f"{len(synced)}個のコマンドを同期しました。")
+        # 起動時のステータス設定（赤色のみ）
+        await bot.change_presence(status=discord.Status.do_not_disturb)
+        print("ステータスを設定しました")
+        
+        # RecruitmentCogを読み込み
+        print("RecruitmentCogを読み込み中...")
+        await bot.load_extension('cogs.recruitment')
+        print("Recruitment cog loaded successfully!")
+        
+        # Cogが正しく読み込まれたか確認
+        if 'RecruitmentCog' in [cog.__class__.__name__ for cog in bot.cogs.values()]:
+            print("RecruitmentCogが正常に読み込まれました")
+        else:
+            print("警告: RecruitmentCogが読み込まれていません")
+        
+        # コマンドを同期
+        print("コマンドを同期中...")
+        await bot.tree.sync()
+        print("Commands synced successfully!")
+        
     except Exception as e:
-        print(f"コマンド同期エラー: {e}")
+        print(f"Error during startup: {e}")
+        import traceback
+        print(traceback.format_exc())
+        # エラーが発生した場合でもBotは継続して動作
+        if not any(cog.lower() == 'recruitment' for cog in bot.cogs):
+            print("Warning: RecruitmentCog failed to load. Some features may be unavailable.")
 
 # 開発用: コマンドを特定のギルドにのみ同期
 @bot.command()
@@ -65,14 +87,5 @@ async def sync_global(ctx):
     except Exception as e:
         await ctx.send(f"コマンド同期エラー: {e}")
 
-async def load_cogs():
-    await bot.load_extension('cogs.profile')
-    await bot.load_extension('cogs.team')
-    await bot.load_extension('cogs.lol')
-
 if __name__ == "__main__":
-    import asyncio
-    async def main():
-        await load_cogs()
-        await bot.start(TOKEN)
-    asyncio.run(main())
+    bot.run(TOKEN)
